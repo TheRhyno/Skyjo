@@ -1,0 +1,889 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Skyjo</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+
+  <style>
+    body {
+      font-family: sans-serif;
+      background: #4caf50;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      color: white;
+      margin: 0;
+      padding: 20px;
+    }
+
+    #game-container {
+      display: flex;
+      gap: 40px;
+      margin-top: 30px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, 80px);
+      grid-gap: 10px;
+    }
+
+    .card {
+      width: 80px;
+      height: 120px;
+      background: #2e7d32;
+      border: 2px solid white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      cursor: default;
+      user-select: none;
+    }
+    .card.revealed {
+      background: white;
+      color: black;
+      cursor: pointer;
+    }
+
+.card img {
+  object-fit: contain;
+  width: 100%;
+  height: 100%;
+}
+
+.card {
+  border: none !important;
+  background: none !important;
+  box-shadow: none !important;
+  outline: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+
+
+    #draw-button, #discard-button, #take-discard-button {
+      margin-top: 20px;
+      padding: 10px 20px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+
+    #drawn-card, #discard-pile {
+      margin-top: 20px;
+      font-size: 20px;
+      background: white;
+      color: black;
+      padding: 10px;
+      border-radius: 5px;
+      min-width: 160px;
+      text-align: center;
+    }
+
+    #discard-pile {
+      margin-bottom: 10px;
+    }
+
+    h2 {
+      margin-bottom: 10px;
+      text-align: center;
+    }
+
+
+#draw-area {
+  margin-top: 20px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-width: 160px; /* largeur minimale */
+}
+
+
+
+
+/* Adaptation mobile */
+@media (max-width: 768px) {
+  #game-container {
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+  }
+
+  .grid {
+    grid-template-columns: repeat(4, 60px);
+    grid-gap: 6px;
+  }
+
+  .card {
+    width: 60px;
+    height: 90px;
+  }
+
+  #draw-button, #discard-button, #take-discard-button {
+    width: 100%;
+    font-size: 16px;
+    padding: 12px;
+    margin: 10px 0;
+  }
+
+  #draw-area {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+  }
+
+  #drawn-card {
+    width: 100%;
+    min-width: unset;
+  }
+
+  body {
+    padding: 10px;
+  }
+
+  input#peer-id {
+    width: 100%;
+    margin-top: 10px;
+  }
+
+  h1, h2 {
+    font-size: 22px;
+  }
+}
+
+
+
+
+
+
+
+
+  </style>
+</head>
+<body>
+  <h1>Skyjo</h1>
+
+  <div>
+    Mon ID : <span id="my-id">...</span>
+    <input id="peer-id" placeholder="ID du joueur distant" />
+    <button onclick="connectToPeer()">Connexion</button>
+  </div>
+
+<div id="game-container" style="display:none;">
+  <p id="turn-info" style="margin-bottom:20px; font-size:18px; text-align:center;"></p>
+
+  <div>
+    <h2>Mes cartes</h2>
+    <div class="grid" id="player-grid"></div>
+  </div>
+
+  <div>
+    <h2>Cartes adversaire</h2>
+    <div class="grid" id="opponent-grid"></div>
+  </div>
+</div>
+
+<button id="vsBotButton">Jouer contre le robot</button>
+
+<div id="draw-area">
+  <button id="draw-button">Tirer une carte</button>
+  <div id="drawn-card" style="display:none; font-size: 20px; color: black; background: white; padding: 10px; border-radius: 5px; min-width: 160px; text-align: center;"></div>
+</div>
+
+<button id="take-discard-button" disabled>Prendre la défausse</button>
+  <button id="discard-button" disabled>🗑 Défausser la carte</button>
+  <div id="drawn-card"></div>
+  <div id="discard-pile">Défausse : vide</div>
+  <p id="turn-info" style="margin-top:20px; font-size:18px;"></p>
+
+  <script>
+    const values = [-2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    let deck = [];
+    let discardPile = [];
+    let playerCards = [];
+    let opponentCards = [];
+    let drawnCard = null;
+    let pendingReveal = false;
+    let revealedCount = 0;
+    let isMyTurn = false;
+
+    let peer = new Peer();
+peer.on('error', err => {
+  console.error('Erreur PeerJS :', err);
+  alert('❌ Erreur PeerJS : ' + err);
+});
+
+    let conn = null;
+
+let isVsBot = false;
+
+
+    peer.on('open', id => {
+      document.getElementById('my-id').textContent = id;
+      console.log("Mon ID :", id);
+    });
+
+    peer.on('connection', connection => {
+      conn = connection;
+      setupConnection();
+      startGame(true);
+    });
+
+    function connectToPeer() {
+      const otherId = document.getElementById('peer-id').value;
+      conn = peer.connect(otherId);
+conn.on('open', () => {
+  console.log("Connecté à", otherId);
+  setupConnection();
+  // ❌ supprime ou commente cette ligne :
+  // startGame(false);
+});
+
+
+    }
+
+function setupConnection() {
+  conn.on('data', handleReceivedData);
+
+  // Lancer le jeu si c’est le client (c’est-à-dire celui qui a cliqué sur Connexion)
+  if (!isVsBot && !playerCards.length) {
+    startGame(false);
+  }
+}
+
+
+    function shuffleDeck() {
+      deck = [];
+      for(let i=0; i<10; i++) {
+        deck = deck.concat(values);
+      }
+      deck.sort(() => Math.random() - 0.5);
+    }
+
+    function startGame(isHost) {
+      shuffleDeck();
+      discardPile = [];
+      playerCards = [];
+      opponentCards = [];
+      revealedCount = 0;
+      drawnCard = null;
+      pendingReveal = false;
+      isMyTurn = isHost;
+
+      document.getElementById('game-container').style.display = 'flex';
+      updateTurnInfo();
+
+for(let i = 0; i < 12; i++) {
+    const playerCardValue = deck.pop();
+    const playerRevealed = i < 2; // 2 premières cartes du joueur révélées
+
+    playerCards.push({ value: playerCardValue, revealed: playerRevealed });
+
+    const opponentCardValue = deck.pop();
+    const opponentRevealed = i < 2; // 2 premières cartes du robot révélées
+
+    opponentCards.push({ value: opponentCardValue, revealed: opponentRevealed });
+}
+
+
+      updateGrid();
+      updateOpponentGrid();
+      updateDiscard();
+
+      // Boutons initialisation
+      updateButtons();
+    }
+
+function updateGrid() {
+  const grid = document.getElementById('player-grid');
+  grid.innerHTML = '';
+  playerCards.forEach((card, i) => {
+    const cardEl = document.createElement('div');
+    cardEl.className = 'card';
+    // Crée une image
+    const img = document.createElement('img');
+    img.src = getCardImage(card.value, card.revealed);
+    img.style.width = '100%';
+    img.style.height = '100%';
+    cardEl.appendChild(img);
+
+    if (isMyTurn && (!card.revealed || pendingReveal)) {
+      cardEl.style.cursor = 'pointer';
+    } else {
+      cardEl.style.cursor = 'default';
+    }
+
+    if (isMyTurn) {
+      cardEl.onclick = () => {
+        if (pendingReveal && !card.revealed) {
+          revealCard(i);
+        } else if (drawnCard !== null) {
+          replaceCard(i);
+        }
+      };
+    }
+    grid.appendChild(cardEl);
+  });
+}
+
+
+
+
+function updateOpponentGrid() {
+  const grid = document.getElementById('opponent-grid');
+  grid.innerHTML = '';
+  opponentCards.forEach(card => {
+    const cardEl = document.createElement('div');
+    cardEl.className = 'card';
+    const img = document.createElement('img');
+    img.src = getCardImage(card.value, card.revealed);
+    img.style.width = '100%';
+    img.style.height = '100%';
+    cardEl.appendChild(img);
+    grid.appendChild(cardEl);
+  });
+}
+
+
+function drawCard() {
+  if(!isMyTurn || drawnCard !== null) return;
+
+  if (deck.length === 0) {
+    if (discardPile.length <= 1) {
+      alert("Plus de cartes à piocher !");
+      return;  // Pas de cartes à remettre dans le deck
+    }
+    // On prend toutes les cartes de la défausse sauf la dernière (visible)
+    const lastDiscard = discardPile.pop();
+    deck = discardPile;
+    discardPile = [lastDiscard];
+    // Mélanger le deck
+    deck.sort(() => Math.random() - 0.5);
+    updateDiscard();
+  }
+
+  drawnCard = deck.pop();
+
+  // cacher le bouton tirer
+  document.getElementById('draw-button').disabled = true;
+  document.getElementById('take-discard-button').disabled = true;
+
+  // afficher la carte tirée
+  const drawnCardDiv = document.getElementById('drawn-card');
+  drawnCardDiv.style.display = 'block';
+  drawnCardDiv.innerHTML = `<img src="${getCardImage(drawnCard, true)}" alt="Carte tirée" style="width:80px; height:120px;" />`;
+
+  document.getElementById('discard-button').disabled = false;
+  updateButtons();
+}
+
+
+
+let takenFromDiscard = false;
+
+function replaceCard(index) {
+  if(!isMyTurn || drawnCard === null) return;
+  const replaced = playerCards[index];
+
+  if(!replaced.revealed) {
+    revealedCount++;
+  }
+
+playerCards[index] = {value: drawnCard, revealed: true};
+
+if(takenFromDiscard) {
+  discardPile.pop();
+  takenFromDiscard = false;
+} else {
+  discardPile.push(replaced.value);
+}
+
+drawnCard = null;
+
+  pendingReveal = false;
+  updateDiscard();
+  updateGrid();
+  updateButtons();
+  sendGameState();
+  endTurn();
+
+// remettre le bouton tirer visible et cacher la carte tirée
+document.getElementById('draw-button').disabled = false;
+document.getElementById('take-discard-button').disabled = discardPile.length === 0;
+document.getElementById('drawn-card').style.display = 'none';
+document.getElementById('draw-button').style.display = 'inline-block';
+document.getElementById('take-discard-button').style.display = 'inline-block';
+
+
+}
+
+
+
+    function discardCard() {
+      if(!isMyTurn || drawnCard === null) return;
+      discardPile.push(drawnCard);
+      drawnCard = null;
+      pendingReveal = true;
+      updateDiscard();
+      updateButtons();
+      alert('Carte défaussée ! Cliquez sur une carte pour la retourner.');
+
+// remettre le bouton tirer visible et cacher la carte tirée
+document.getElementById('draw-button').disabled = true;
+document.getElementById('drawn-card').style.display = 'none';
+
+    }
+
+    function revealCard(index) {
+      if(!isMyTurn || !pendingReveal) return;
+      const card = playerCards[index];
+      if(!card.revealed) {
+        card.revealed = true;
+        pendingReveal = false;
+        revealedCount++;
+        updateGrid();
+        sendGameState();
+    checkAndRemoveColumns();  // Ajout ici aussi
+checkEndGame();
+        endTurn();
+      }
+    }
+
+function updateDiscard() {
+  const last = discardPile.length ? discardPile[discardPile.length -1] : 'vide';
+  const discardEl = document.getElementById('discard-pile');
+  discardEl.textContent = `Défausse : ${last}`;
+
+  // Rendre cliquable la carte défaussée si c'est le tour du joueur et qu'il n'a pas encore pioché/remplacé
+  if(isMyTurn && drawnCard === null && !pendingReveal && discardPile.length > 0) {
+    discardEl.style.cursor = 'pointer';
+    discardEl.onclick = () => {
+      // On "pioche" la carte défaussée (mais sans la retirer encore de la défausse)
+      drawnCard = discardPile[discardPile.length -1];
+      alert(`Vous avez choisi la carte défaussée: ${drawnCard}. Cliquez sur une de vos cartes pour la remplacer.`);
+      updateButtons();
+      // Pour différencier cette action, on met un flag spécial
+      takenFromDiscard = true;
+    };
+  } else {
+    discardEl.style.cursor = 'default';
+    discardEl.onclick = null;
+  }
+}
+
+function updateButtons() {
+  const drawBtn = document.getElementById('draw-button');
+  const discardBtn = document.getElementById('discard-button');
+  const takeDiscardBtn = document.getElementById('take-discard-button');
+
+  if (!isMyTurn) {
+    drawBtn.disabled = true;
+    discardBtn.disabled = true;
+    takeDiscardBtn.disabled = true;
+
+    // Afficher les boutons pour que ça ne reste pas caché quand ce n'est pas le tour
+    drawBtn.style.display = 'inline-block';
+    takeDiscardBtn.style.display = 'inline-block';
+
+  } else {
+    if (drawnCard === null) {
+      drawBtn.disabled = false;
+      takeDiscardBtn.disabled = discardPile.length === 0;
+      discardBtn.disabled = true;
+
+      // Faire réapparaître les boutons
+      drawBtn.style.display = 'inline-block';
+      takeDiscardBtn.style.display = 'inline-block';
+    } else {
+      drawBtn.disabled = true;
+      takeDiscardBtn.disabled = true;
+      discardBtn.disabled = false;
+    }
+  }
+}
+
+
+
+    function updateTurnInfo() {
+      document.getElementById('turn-info').textContent = isMyTurn ? "🎫 C'est votre tour" : "⏳ Tour de l'adversaire";
+    }
+
+
+
+
+
+function sendGameState() {
+  if (conn && conn.open) {
+    conn.send({
+      cards: playerCards,          // mes cartes (pour l'autre joueur c'est adversaire)
+      discard: discardPile,
+      isMyTurn: isMyTurn,
+      drawn: drawnCard,
+      pendingReveal,
+    });
+  }
+}
+
+
+
+
+function handleReceivedData(data) {
+  // 🎯 Fin de partie envoyée
+  if (data.type === 'game_over') {
+    // Révéler nos propres cartes localement
+    playerCards.forEach(c => c.revealed = true);
+
+    // Importer les cartes adverses révélées
+    opponentCards = data.opponentCards;
+
+    // Mettre à jour l'affichage
+    updateGrid();
+    updateOpponentGrid();
+
+    const myScore = playerCards.reduce((sum, c) => sum + c.value, 0);
+    const opponentScore = data.playerScore;
+
+    setTimeout(() => {
+      alert(`Fin du jeu !\nVotre score : ${myScore}\nScore adverse : ${opponentScore}\n` +
+        (myScore < opponentScore
+          ? "🎉 Vous avez gagné !"
+          : myScore > opponentScore
+          ? "😢 Vous avez perdu."
+          : "🤝 Égalité !"));
+    }, 100);
+    return;
+  }
+
+  // 🎮 Données de jeu normales (échange de tour)
+  if (data.cards && data.opponentCards !== undefined) {
+    // Mettre à jour l’état local avec les infos reçues
+    opponentCards = data.cards;
+    playerCards = data.opponentCards; // Ce sont nos cartes chez l'autre joueur
+
+    discardPile = data.discard || [];
+    isMyTurn = data.isMyTurn === false; // Inverse car l'autre joueur envoie son tour
+
+    // Ne réinitialise drawnCard que si pas en attente de remplacement
+    if (!data.pendingReveal) {
+      drawnCard = null;
+    } else {
+      pendingReveal = true;
+    }
+
+    // Mettre à jour l’affichage
+    updateGrid();
+    updateOpponentGrid();
+    updateDiscard();
+    updateTurnInfo();
+    updateButtons();
+
+    // Afficher la carte piochée si elle a été prise de la défausse
+    if (drawnCard) {
+      const drawnCardDiv = document.getElementById('drawn-card');
+      drawnCardDiv.style.display = 'block';
+      drawnCardDiv.innerHTML = `<img src="${getCardImage(drawnCard, true)}" alt="Carte piochée" style="width:80px; height:120px;" />`;
+    }
+  }
+}
+
+
+
+
+
+
+
+
+
+
+    document.getElementById('draw-button').addEventListener('click', drawCard);
+    document.getElementById('discard-button').addEventListener('click', discardCard);
+
+function endTurn() {
+  isMyTurn = false;
+  drawnCard = null;
+  pendingReveal = false;
+  updateButtons();
+  updateTurnInfo();
+  sendGameState();
+
+  // Vérifie si toutes les cartes sont révélées
+  const allRevealed = playerCards.every(c => c.revealed);
+  if (allRevealed) {
+    // Révèle les cartes adverses localement
+    opponentCards.forEach(c => c.revealed = true);
+    updateOpponentGrid();
+
+    const myScore = playerCards.reduce((sum, c) => sum + c.value, 0);
+    const opponentScore = opponentCards.reduce((sum, c) => sum + c.value, 0);
+
+    const result = {
+      type: 'game_over',
+      playerScore: myScore,
+      opponentScore: opponentScore,
+      opponentCards: playerCards // on envoie nos cartes révélées
+    };
+
+    if (conn && conn.open) {
+      conn.send(result);
+    }
+
+    setTimeout(() => {
+      alert(`Fin du jeu !\nVotre score : ${myScore}\nScore adverse : ${opponentScore}\n${myScore < opponentScore ? "🎉 Vous gagnez !" : myScore > opponentScore ? "😢 Vous perdez." : "🤝 Égalité !"}`);
+    }, 100);
+  }
+  if (isVsBot && !allRevealed) {
+    setTimeout(botTurn, 1000); // Le robot joue après une petite pause
+  }
+}
+
+
+
+function checkAndRemoveColumns() {
+  // 4 colonnes, indices des cartes par colonne
+  const columns = [
+    [0, 4, 8],
+    [1, 5, 9],
+    [2, 6, 10],
+    [3, 7, 11]
+  ];
+
+  columns.forEach(col => {
+    const [i1, i2, i3] = col;
+    const c1 = playerCards[i1];
+    const c2 = playerCards[i2];
+    const c3 = playerCards[i3];
+
+    if (c1.revealed && c2.revealed && c3.revealed &&
+        c1.value === c2.value && c2.value === c3.value) {
+      // Supprime la colonne : ici on met à null ou une carte spéciale
+      col.forEach(i => {
+        playerCards[i] = {value: 0, revealed: true}; // ou null si tu gères bien après
+      });
+      alert(`Colonne avec 3 cartes ${c1.value} identiques supprimée !`);
+    }
+  });
+}
+
+
+function checkEndGame() {
+  const allRevealed = playerCards.every(card => card.revealed);
+  if (allRevealed) {
+    // Révéler les cartes de l'adversaire
+    opponentCards.forEach(card => card.revealed = true);
+
+    // Calcul des points
+    const playerPoints = playerCards.reduce((sum, card) => sum + card.value, 0);
+    const opponentPoints = opponentCards.reduce((sum, card) => sum + card.value, 0);
+
+    updateGrid();
+    updateOpponentGrid();
+
+    // Afficher le résultat
+    setTimeout(() => {
+      let result = `Fin du jeu !\n\n`;
+      result += `Vos points : ${playerPoints}\n`;
+      result += `Points de l'adversaire : ${opponentPoints}\n\n`;
+
+      if (playerPoints < opponentPoints) {
+        result += "🎉 Vous avez gagné !";
+      } else if (playerPoints > opponentPoints) {
+        result += "😢 Vous avez perdu.";
+      } else {
+        result += "🤝 Égalité !";
+      }
+
+      alert(result);
+    }, 500); // petit délai pour que la grille se mette à jour
+  }
+}
+
+
+document.getElementById('take-discard-button').addEventListener('click', () => {
+  if (!isMyTurn || discardPile.length === 0) return;
+  drawnCard = discardPile[discardPile.length - 1];
+  pendingReveal = false;
+
+  const drawnCardDiv = document.getElementById('drawn-card');
+  drawnCardDiv.style.display = 'block';
+  drawnCardDiv.innerHTML = `<img src="${getCardImage(drawnCard, true)}" alt="Carte prise de la défausse" style="width:80px; height:120px;" />`;
+
+  // **Ajoute ces deux lignes pour cacher les boutons**
+  document.getElementById('draw-button').style.display = 'none';
+  document.getElementById('take-discard-button').style.display = 'none';
+
+  updateButtons();
+  alert(`Vous avez choisi la carte défaussée : ${drawnCard}. Cliquez sur une de vos cartes pour la remplacer.`);
+});
+
+
+
+
+const cardImages = {
+  "-2": "https://raw.githubusercontent.com/TheRhyno/Skyjo/main/-2.jpg",
+  "-1": "https://raw.githubusercontent.com/TheRhyno/Skyjo/main/-1.jpg",
+  "0":  "https://raw.githubusercontent.com/TheRhyno/Skyjo/main/0.jpg",
+  "1":  "https://raw.githubusercontent.com/TheRhyno/Skyjo/main/1.jpg",
+  "2":  "https://raw.githubusercontent.com/TheRhyno/Skyjo/main/2.jpg",
+  "3":  "https://raw.githubusercontent.com/TheRhyno/Skyjo/main/3.jpg",
+  "4":  "https://raw.githubusercontent.com/TheRhyno/Skyjo/main/4.jpg",
+  "5":  "https://raw.githubusercontent.com/TheRhyno/Skyjo/main/5.jpg",
+  "6":  "https://raw.githubusercontent.com/TheRhyno/Skyjo/main/6.jpg",
+  "7":  "https://raw.githubusercontent.com/TheRhyno/Skyjo/main/7.jpg",
+  "8":  "https://raw.githubusercontent.com/TheRhyno/Skyjo/main/8.jpg",
+  "9":  "https://raw.githubusercontent.com/TheRhyno/Skyjo/main/9.jpg",
+  "10": "https://raw.githubusercontent.com/TheRhyno/Skyjo/main/10.jpg",
+  "11": "https://raw.githubusercontent.com/TheRhyno/Skyjo/main/11.jpg",
+  "12": "https://raw.githubusercontent.com/TheRhyno/Skyjo/main/12.jpg",
+};
+
+// Image dos de carte (face cachée)
+const backImage = "https://lh4.googleusercontent.com/proxy/YNKIPaWnXb-IHMBJU3lGR9EwV73NpB0jmznXZZmr2Q2x2F3U8s5MVXIfvHLbrik73S5_EUiyIlzCtQX2mOMCOKwfWyGN7Wg";
+
+// Fonction qui retourne l’URL image à afficher selon la valeur et le statut révélé
+function getCardImage(value, revealed) {
+  if (!revealed) return backImage;
+  return cardImages[value.toString()] || backImage;
+}
+
+document.getElementById('vsBotButton').addEventListener('click', () => {
+  startGameVsBot();
+});
+
+function botPlayTurn() {
+  if (!gameStarted || currentPlayer !== 2) return;
+
+  setTimeout(() => {
+    let drawnCard;
+    // Le bot prend la carte visible si elle est basse, sinon il pioche
+    if (defausse.length > 0 && defausse[defausse.length - 1] <= 5) {
+      drawnCard = defausse.pop();
+    } else {
+      drawnCard = pioche.pop();
+    }
+
+    // Le bot choisit la carte visible la plus haute pour la remplacer
+    let maxVal = -1;
+    let maxIndex = -1;
+    for (let i = 0; i < joueur2.length; i++) {
+      if (joueur2[i].visible && joueur2[i].valeur > maxVal) {
+        maxVal = joueur2[i].valeur;
+        maxIndex = i;
+      }
+    }
+
+    // Sinon, prend une carte au hasard cachée
+    if (maxIndex === -1) {
+      maxIndex = joueur2.findIndex(c => !c.visible);
+    }
+
+    if (maxIndex !== -1) {
+      defausse.push(joueur2[maxIndex].valeur);
+      joueur2[maxIndex] = { valeur: drawnCard, visible: true };
+    }
+
+    checkFinTour();
+  }, 1000); // délai pour simuler une réflexion
+}
+
+function startGameVsBot() {
+  isVsBot = true;
+  startGame(); // ou initGame() selon le nom de ta fonction
+  currentPlayer = 1; // le joueur humain commence
+}
+
+document.getElementById('vsBotButton').addEventListener('click', () => {
+  isVsBot = true;
+  document.getElementById('vsBotButton').style.display = 'none';
+  startGame(true); // Le joueur commence
+});
+
+
+function botTurn() {
+  if (!isVsBot || isMyTurn) return;
+
+  const discardTop = discardPile.length ? discardPile[discardPile.length - 1] : null;
+  let drawn = null;
+  let takenFromDiscard = false;
+
+  // 🔁 Étape 1 : Choisir entre défausse et pioche
+  if (discardTop != null && discardTop <= 3) {
+    drawn = discardPile.pop();
+    takenFromDiscard = true;
+  } else {
+    if (deck.length === 0) {
+      if (discardPile.length > 1) {
+        const last = discardPile.pop();
+        deck = discardPile;
+        discardPile = [last];
+        deck.sort(() => Math.random() - 0.5); // 🔀 Bien mélanger
+        updateDiscard();
+      } else {
+        isMyTurn = true;
+        updateTurnInfo();
+        updateButtons();
+        return;
+      }
+    }
+    drawn = deck.pop();
+  }
+
+  // 🔁 Étape 2 : Décider de remplacer une carte
+  let replaceIdx = -1;
+  let highestVisible = -Infinity;
+
+  for (let i = 0; i < opponentCards.length; i++) {
+    const c = opponentCards[i];
+    if (c.revealed && c.value > highestVisible) {
+      highestVisible = c.value;
+      replaceIdx = i;
+    }
+  }
+
+  // 🔁 Étape 3 : Choisir une carte cachée si toutes sont basses
+  if (replaceIdx !== -1 && drawn < highestVisible) {
+    const old = opponentCards[replaceIdx].value;
+    opponentCards[replaceIdx] = { value: drawn, revealed: true };
+
+    if (!takenFromDiscard) {
+      discardPile.push(old);
+    }
+  } else {
+    // 🔁 Retourner une carte non révélée au hasard
+    const unrevealedIndices = opponentCards.map((c, i) => !c.revealed ? i : -1).filter(i => i !== -1);
+
+    if (unrevealedIndices.length > 0) {
+      const randomIdx = unrevealedIndices[Math.floor(Math.random() * unrevealedIndices.length)];
+      opponentCards[randomIdx].revealed = true;
+
+      if (!takenFromDiscard) {
+        discardPile.push(drawn); // Ne pas garder la carte tirée
+      }
+    } else {
+      // toutes les cartes sont révélées mais la nouvelle n'était pas meilleure → jeter
+      discardPile.push(drawn);
+    }
+  }
+
+  // 🔁 Fin du tour
+  drawnCard = null;
+  updateOpponentGrid();
+  updateDiscard();
+  sendGameState();
+
+  isMyTurn = true;
+  updateTurnInfo();
+  updateButtons();
+}
+
+
+
+
+
+  </script>
+</body>
+</html>
